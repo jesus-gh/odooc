@@ -7,7 +7,7 @@ odoo.define('base_geoengine.GeoengineView', function (require) {
      * display data in three types of chart: bar chart, line chart and pie chart.
      */
     
-    var AbstractView = require('web.AbstractView');
+    var AbstractView = require('web.BasicView');
     var core = require('web.core');
     var QWeb = require('web.QWeb');
     var GeoengineModel = require('base_geoengine.GeoengineModel');

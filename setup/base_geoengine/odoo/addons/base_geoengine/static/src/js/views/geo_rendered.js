@@ -9,7 +9,7 @@ odoo.define('base_geoengine.GeoengineRenderer', function (require) {
      * use.
      */
     
-    var AbstractRenderer = require('web.AbstractRenderer');
+    var AbstractRenderer = require('web.BasicRenderer');
     var config = require('web.config');
     var core = require('web.core');
     var field_utils = require('web.field_utils');
@@ -19,14 +19,7 @@ odoo.define('base_geoengine.GeoengineRenderer', function (require) {
     var utils = require('web.utils');
     var _t = core._t;
     var qweb = core.qweb;
-    var map = null;
-
-    var DEFAULT_BEGIN_COLOR = "#FFFFFF";
-    var DEFAULT_END_COLOR = "#000000";
-    var DEFAULT_MIN_SIZE = 5; // for prop symbols only
-    var DEFAULT_MAX_SIZE = 15; // for prop symbols only
-    var DEFAULT_NUM_CLASSES = 5; // for choroplets only
-    var LEGEND_MAX_ITEMS = 10;
+    
     
 
     
@@ -46,15 +39,11 @@ odoo.define('base_geoengine.GeoengineRenderer', function (require) {
             this.featurePopup = undefined;
         },
 
-        _render: function(){
+        _renderView: function(){
             var self = this;
             //this.load_view();
-            
-            core.bus.on('DOM_updated', true, function () {
-                self._render_map();
-            });
+            this._render_map();
             return this._super.apply(this, arguments);
-            
         },
 
         load_view: function() {
@@ -108,7 +97,7 @@ odoo.define('base_geoengine.GeoengineRenderer', function (require) {
                 map = new ol.Map({
                     layers: [new ol.layer.Group({
                         title: 'Base maps',
-                        layers: self.createBackgroundLayers(self.state.data.geoengine_layers.backgrounds),
+                        layers: self.createBackgroundLayers(self.fields_view.geoengine_layers.backgrounds),
                     })],
                     target: 'olmap',
                     view: new ol.View({
@@ -128,140 +117,7 @@ odoo.define('base_geoengine.GeoengineRenderer', function (require) {
             }
         },
 
-        register_interaction: function () {
-            var self = this;
-            // select interaction working on "click"
 
-            var selectClick = new ol.interaction.Select({
-                condition: ol.events.condition.click,
-                style: self.get_custom_selected_style_function(),
-            });
-            selectClick.on('select', function (e) {
-                var features = e.target.getFeatures();
-                self.update_info_box(features);
-
-                if (features.getLength() > 0) {
-                    var feature = features.item(0);
-                    self.showFeaturePopup(feature);
-                }
-            });
-
-            // select interaction working on "pointermove"
-            var selectPointerMove = new ol.interaction.Select({
-                condition: ol.events.condition.pointerMove,
-                style: self.get_custom_selected_style_function(),
-            });
-
-            // a DragBox interaction used to select features by drawing boxes
-            var dragBox = new ol.interaction.DragBox({
-                condition: ol.events.condition.shiftKeyOnly,
-                style: new ol.style.Style({
-                    stroke: new ol.style.Stroke({
-                        color: [0, 0, 255, 1]
-                    })
-                })
-            });
-
-            var selectedFeatures = selectClick.getFeatures();
-            dragBox.on('boxend', function (e) {
-                // features that intersect the box are added to the collection of
-                // selected features, and their names are displayed in the "info"
-                // div
-                var info = [];
-                var extent = dragBox.getGeometry().getExtent();
-                var layerVectors = self.map.getLayers().item(1).getLayers();
-                var vectorSource;
-                layerVectors.forEach(function (lv) {
-                    // enable selection only on visible layers
-                    if (lv.getVisible()) {
-                        vectorSource = lv.getSource();
-                        vectorSource.forEachFeatureIntersectingExtent(extent, function (feature) {
-                            if (selectedFeatures.getArray().indexOf(feature) < 0) {
-                                selectedFeatures.push(feature);
-                            }
-                        });
-                    }
-                });
-                self.update_info_box(selectedFeatures);
-            });
-
-            this.map.addInteraction(dragBox);
-            this.map.addInteraction(selectClick);
-            this.map.addInteraction(selectPointerMove);
-        },
-
-        get_custom_selected_style_function: function () {
-            var self = this;
-            return function (feature, resolution) {
-                var geometryType = feature.getGeometry().getType();
-                var styles = ol.style.Style.createDefaultEditing();
-                var geometryStyle = styles[geometryType];
-                if (geometryType !== ol.geom.GeometryType.POINT) {
-                    return geometryStyle;
-                }
-
-                var geometryStylePoint = geometryStyle[0];
-                return [new ol.style.Style({
-                    fill: geometryStylePoint.getFill(),
-                    stroke: geometryStylePoint.getStroke(),
-                    image: new ol.style.Circle({
-                        fill: geometryStylePoint.image_.getFill(),
-                        stroke: geometryStylePoint.image_.getStroke(),
-                        radius: self.getBasicCircleRadius(),
-                    })
-                })];
-            }
-        },
-
-        do_load_vector_data: function (data) {
-            var self = this;
-            if (!self.map) {
-                return;
-            }
-
-            map.removeLayer(self.overlaysGroup);
-
-            var vectorLayers = self.createVectorLayers(data);
-            self.overlaysGroup = new ol.layer.Group({
-                title: 'Overlays',
-                layers: vectorLayers,
-            });
-
-            self.createPopupOverlay();
-
-            _.each(vectorLayers, function (vlayer) {
-                // First vector always visible on startup
-                if (vlayer !== vectorLayers[0] && !vlayer.values_.active_on_startup) {
-                    vlayer.setVisible(false);
-                }
-            });
-            map.addLayer(self.overlaysGroup);
-            map.addOverlay(self.overlayPopup);
-
-            // zoom to data extent
-            //map.zoomTo
-            if (data.length) {
-                var extent = vectorLayers[0].getSource().getExtent();
-                self.zoom_to_extent_ctrl.extent_ = extent;
-                self.zoom_to_extent_ctrl.changed();
-
-                // When user quit fullscreen map, the size is set to undefined
-                // So we have to check this and recompute the size.
-                var size = map.getSize();
-                if (size === undefined) {
-                    map.updateSize();
-                    size = map.getSize();
-                }
-                map.getView().fit(extent, map.getSize());
-
-                var ids = [];
-                // Javascript expert please improve this code
-                for (var i = 0, len = data.length; i < len; ++i) {
-                    ids.push(data[i]['id']);
-                }
-                self.dataset.ids = ids;
-            }
-        },
 
            /**
      * Method: createVectorLayer
